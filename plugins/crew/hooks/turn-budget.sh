@@ -39,7 +39,7 @@ case "$agent_type" in
   tank) budget=108 ;;
   trinity) budget=108 ;;
   oracle) budget=84 ;;
-  dozer) budget=84 ;;
+  dozer) budget=120 ;;
   seraph) budget=60 ;;
   neo) budget=72 ;;
   sentinel) budget=60 ;;

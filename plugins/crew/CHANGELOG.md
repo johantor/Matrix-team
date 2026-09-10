@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `dozer` runs with `maxTurns: 120` (was 84), and the `turn-budget` table follows. E2e work
+  is turn-expensive per spec — write, run, read the failure, re-instrument, re-run — and a
+  dispatch of a dozen specs exhausted the old budget mid-run twice. The budget now covers
+  such a dispatch; keep dispatches at a handful of specs so a truncation stays cheap.
+
 ### Fixed
 
 - `tank`, `/crew:notify`, `/crew:triage` and the `mid-run-direction` skill carried a
