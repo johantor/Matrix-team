@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.25.0] - 2026-09-10
+
 ### Changed
 
 - `dozer` runs with `maxTurns: 120` (was 84), and the `turn-budget` table follows. E2e work
