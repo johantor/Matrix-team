@@ -571,6 +571,12 @@ GUARD_RE_OPAQUE_CMD='^(pushd|popd|eval|exec|source|\.|bash|sh|zsh|dash|ksh|xargs
 # Prefixes that may stand before the real command word: an assignment, a wrapper,
 # and the shell keywords that put a command after them (`then git commit …`).
 GUARD_RE_CMD_PREFIX='^([A-Za-z_][A-Za-z0-9_]*=.*|env|command|builtin|nohup|time|if|then|else|elif|while|until|do|!)$'
+# Of those, the ones that exec a program: they cannot run `cd`, which is a
+# builtin, so `nohup cd wt` moves nothing and the carry must not follow it.
+GUARD_RE_EXTERNAL_WRAPPER='^(env|nohup)$'
+# The options bash's own `cd` accepts. Anything else makes it fail before it
+# moves, so the shell stays where it was.
+GUARD_RE_CD_OPTION='^-[LPe@]+$'
 # The two assignments that send git at another repository entirely.
 GUARD_RE_GIT_ENV='^(GIT_DIR|GIT_WORK_TREE)=(.*)$'
 
@@ -603,12 +609,12 @@ guard_collect_commit_dirs() {
     while :; do
       guard_seg="${guard_seg#"${guard_seg%%[![:space:]]*}"}"
       case "$guard_seg" in
-        [\({]*) guard_seg="${guard_seg#?}" ;;
+        \(*|\{*) guard_seg="${guard_seg#?}" ;;
         *) break ;;
       esac
     done
     guard_wrest="$guard_seg"
-    pre_cur="$cur"; did_cd=''; commit=''; opaque=''; dir="$cur"; dirsure="$sure"
+    pre_cur="$cur"; did_cd=''; commit=''; opaque=''; dir="$cur"; dirsure="$sure"; ext=''
 
     # The command word, past any prefix word. An assignment that points git at
     # another repository is a candidate of its own, not a harmless prefix.
@@ -624,6 +630,7 @@ guard_collect_commit_dirs() {
         continue
       fi
       [[ $guard_word =~ $GUARD_RE_CMD_PREFIX ]] || break
+      if [[ $guard_word =~ $GUARD_RE_EXTERNAL_WRAPPER ]]; then ext=1; fi
     done
     case "$guard_word" in
       # A command word cannot begin with `-`, so a wrapper's own option (`env -i
@@ -640,6 +647,9 @@ guard_collect_commit_dirs() {
             case "$guard_word" in
               --) continue ;;
               -?*) if [ -n "$target" ]; then extra=1; break; fi
+                   # An option bash's `cd` does not take makes it fail before it
+                   # moves anywhere.
+                   [[ $guard_word =~ $GUARD_RE_CD_OPTION ]] || { extra=1; break; }
                    # `-P` resolves symlinks as it goes and leaves the shell on
                    # the physical path, so from here on `..` means what it means
                    # to git, and the joins stop collapsing it.
@@ -649,8 +659,10 @@ guard_collect_commit_dirs() {
             if [ -n "$target" ]; then extra=1; break; fi   # `cd a b` fails outright
             target="$guard_word"
           done
-          # A redirection on the `cd` can fail and take the `cd` with it.
+          # A redirection on the `cd` can fail and take the `cd` with it, and an
+          # external wrapper cannot run a builtin at all.
           case "$guard_wrest" in [\<\>]*) extra=1 ;; esac
+          if [ -n "$ext" ]; then extra=1; fi
           if [ -n "$extra" ]; then
             sure=''
           elif [ -z "$target" ]; then
@@ -757,7 +769,7 @@ guard_collect_commit_dirs() {
     # A `cd` reached through `&&` is safe to carry while that chain continues; a
     # `;` or `&` ends the chain, and with it the certainty.
     case "$guard_sep" in
-      ';'|'&'|$'\n') if [ -n "$cond" ]; then sure=''; cond=''; fi ;;
+      ';'|'&'|'||'|$'\n') if [ -n "$cond" ]; then sure=''; cond=''; fi ;;
     esac
     case "$guard_sep" in
       '&&') next_cond='and' ;;
