@@ -52,9 +52,11 @@ anything stated here updates this file in the same commit.** Conventions live in
   otherwise be asked before the rule is read. Skill = `<name>/SKILL.md`, frontmatter `name:` +
   `description:` only; the `description:` carries the trigger phrases.
 - `hooks/` — `bash-safety.sh` (workers blocked from git entirely; protected-branch commit
-  backstop — judged on the branch of the directory the commit *runs in*, resolved from the
+  backstop — judged on the branch of every directory the commit *might run in*, read out of the
   command's own `cd`/`git -C`, so a worktree on a feature branch commits while the hook sits in
-  a checkout on `develop`; watch/dev commands refused;
+  a checkout on `develop`. Candidates are **added, never substituted**: the hook's own directory
+  stays in the set unless the walk models every construct in front of the commit, so the check is
+  never weaker than reading that one directory, which is all it used to do; watch/dev commands refused;
   **file-mutating Bash refused for agent sessions** — an
   in-place `sed`/`perl`/`ruby`/`awk`, `tee`, `patch`, `cp`/`mv`, and a redirect to anything but an
   exempt sink — so a Bash write can't route around `lane-guard`/`format.sh`, which are
@@ -88,11 +90,17 @@ anything stated here updates this file in the same commit.** Conventions live in
   (`GUARD_RE_*`), the shared block helpers (`guard_block_destructive` /
   `_watch_commands` / `_raw_reads` / `_file_writes` / `_protected_branch_commit`), the
   quote masking `_file_writes` needs (a `>` inside a string is not a redirect, a quoted
-  target still is a write), the protected-branch list and the quote-aware segment walk
-  `_protected_branch_commit` resolves a commit's working directory with (`guard_next_segment` /
-  `guard_collect_commit_dirs`; every shape it cannot read — an expansion as a `cd` target,
-  `--git-dir`, a chdir inside `bash -c` — falls back to the hook's own directory, which refuses
-  rather than admits),
+  target still is a write), the protected-branch list and the shell walk
+  `_protected_branch_commit` resolves a commit's directories with — `guard_next_word` (a word
+  tokenizer: quotes removed, and a word carrying an expansion, a substitution, an escape or a
+  glob reported as unreadable rather than guessed at), `guard_next_segment`,
+  `guard_join_dir` (logical `x/..` collapsing for a shell `cd`, left physical for git's own
+  `-C`) and `guard_collect_commit_dirs`. It models `&&`/`||` short-circuiting, pipe and `&`
+  subshells, `( … )` nesting and `--git-dir`/`--work-tree`; anything else — `pushd`, `eval`, a
+  nested `bash -c`, an unreadable `cd` target — only loses confidence, which adds the hook's own
+  directory to the candidates instead of replacing them. The walk is also the **detector**: a
+  `commit` anywhere in the command starts it, which reaches the `(git commit)` spelling that
+  `_g_cmdpos` alone does not,
   read-guard's limits, and the TTL-swept state-file helper. It is the one file in `hooks/`
   that must **not** be executable and must **not** be wired (validator §3/§6) — it has no
   main. Matching goes through bash's `=~` and parameter expansion, never `echo | grep`: these

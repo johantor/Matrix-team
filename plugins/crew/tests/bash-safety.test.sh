@@ -49,6 +49,36 @@ assert_block "a cd another command prints"      "$HOOK" "$(payload_bash 'echo cd
 assert_block "a cd that would fail"             "$HOOK" "$(payload_bash 'cd nope; git commit -m x' morpheus)"       "protected branch" "$wt_repo"
 assert_allow "no-agent session in a worktree checkout" "$HOOK" "$(payload_bash 'cd wt && git commit -m x')" "$wt_repo"
 
+# Resolving the directory must never weaken the backstop: where the walk cannot
+# model a construct, the hook's own directory stays a candidate and the commit is
+# judged against it too. Each of these reaches a commit in the protected checkout.
+assert_block "quoted path with a suffix"        "$HOOK" "$(payload_bash 'git -C "wt"/.. commit -m x' morpheus)"        "protected branch" "$wt_repo"
+assert_block "cd back out of the worktree"      "$HOOK" "$(payload_bash 'cd wt && cd .. && git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "pushd after a cd"                 "$HOOK" "$(payload_bash 'cd wt && pushd .. > /dev/null && git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "cd on a pipe's right-hand side"   "$HOOK" "$(payload_bash 'true | cd wt && git commit -m x' morpheus)"   "protected branch" "$wt_repo"
+assert_block "cd the shell may skip"            "$HOOK" "$(payload_bash 'false && cd wt; git commit -m x' morpheus)"   "protected branch" "$wt_repo"
+assert_block "cd run in the background"         "$HOOK" "$(payload_bash 'cd wt & git commit -m x' morpheus)"           "protected branch" "$wt_repo"
+assert_block "commit inside a nested shell"     "$HOOK" "$(payload_bash 'cd wt && bash -c "cd .. && git commit -m x"' morpheus)" "protected branch" "$wt_repo"
+assert_block "cd through eval"                  "$HOOK" "$(payload_bash 'cd wt && eval "cd .." && git commit -m x' morpheus)"    "protected branch" "$wt_repo"
+assert_block "another repo via --git-dir"       "$HOOK" "$(payload_bash 'cd wt && git --git-dir=../.git --work-tree=.. commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "-C inside a quoted option value"  "$HOOK" "$(payload_bash "git -c 'user.name=x -C nowhere' commit -m y" morpheus)" "protected branch" "$wt_repo"
+assert_block "cd with a second operand"         "$HOOK" "$(payload_bash 'cd wt nope; git commit -m x' morpheus)"       "protected branch" "$wt_repo"
+assert_block "an escaped separator in a path"   "$HOOK" "$(payload_bash 'git -C wt\;x commit -m x' morpheus)"          "protected branch" "$wt_repo"
+assert_block "commit in a subshell"             "$HOOK" "$(payload_bash '(git commit -m x)' morpheus)"                 "protected branch" "$wt_repo"
+assert_block "subshell cd stays in the subshell" "$HOOK" "$(payload_bash '(cd wt && git commit -m a); git commit -m b' morpheus)" "protected branch" "$wt_repo"
+# shellcheck disable=SC2016  # `$HOME` must reach the guard unexpanded — a target
+# the guard cannot read is exactly what these two assert.
+assert_block "cd to an unreadable target"       "$HOOK" "$(payload_bash 'cd wt && cd "$HOME"; cd ..; git commit -m x' morpheus)" "protected branch" "$wt_repo"
+
+# Shapes the walk does model stay allowed: a quoted `)` or an expansion inside a
+# commit message decides nothing about where the commit runs.
+assert_allow "a closing paren in the message"   "$HOOK" "$(payload_bash 'cd wt && git commit -m "fix )" && git commit -m x' morpheus)" "$wt_repo"
+# shellcheck disable=SC2016  # the substitution is the point: it is in the message,
+# not in anything that decides the directory.
+assert_allow "a substitution in the message"    "$HOOK" "$(payload_bash 'cd wt && git commit -m "done $(date)"' morpheus)" "$wt_repo"
+assert_allow "a guarded cd in an && chain"      "$HOOK" "$(payload_bash 'git fetch origin && cd wt && git commit -m x' morpheus)" "$wt_repo"
+assert_allow "git -C with -c before commit"     "$HOOK" "$(payload_bash 'git -C wt -c user.name=a commit -m x' morpheus)" "$wt_repo"
+
 # --- Destructive commands ------------------------------------------------------
 assert_block "rm -rf /"        "$HOOK" "$(payload_bash 'rm -rf /' tank)"        "unsafe command"
 assert_block "rm -fr ~"        "$HOOK" "$(payload_bash 'rm -fr ~' tank)"        "unsafe command"
