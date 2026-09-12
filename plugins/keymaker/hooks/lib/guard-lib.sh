@@ -413,7 +413,7 @@ guard_next_word() {
           *\"*) piece="${rest%%\"*}"; rest="${rest#*\"}" ;;
           *)    piece="$rest"; rest=''; ok='' ;;
         esac
-        case "$piece" in *'$'*|*'`'*|*'\'*) ok='' ;; esac
+        case "$piece" in *'$'*|*'`'*|*\\*) ok='' ;; esac
         out+="$piece" ;;
       \\*) ok=''; rest="${rest#??}" ;;
       *)
