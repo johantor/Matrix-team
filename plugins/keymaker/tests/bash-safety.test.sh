@@ -87,6 +87,8 @@ assert_allow "keymaker cd into a worktree"   "$HOOK" "$(payload_bash 'cd wt && g
 assert_block "keymaker cd back to main"      "$HOOK" "$(payload_bash 'cd wt && git -C .. commit -m x' keymaker)" "protected branch" "$wt_repo"
 assert_block "keymaker nested shell commit" "$HOOK" "$(payload_bash 'cd wt && bash -c "cd .. && git commit -m x"' keymaker)" "protected branch" "$wt_repo"
 assert_block "keymaker subshell commit"     "$HOOK" "$(payload_bash '(git commit -m x)' keymaker)" "protected branch" "$wt_repo"
+assert_allow "keymaker echoes the word"     "$HOOK" "$(payload_bash 'echo commit' keymaker)" "$wt_repo"
+assert_block "keymaker newline separator"   "$HOOK" "$(payload_bash $'cd wt\ncd ..\ngit commit -m x' keymaker)" "protected branch" "$wt_repo"
 assert_allow "keymaker commit on the work branch" "$HOOK" "$(payload_bash 'git commit -m x' keymaker)" "$work_repo"
 assert_allow "no-agent session may commit on main" "$HOOK" "$(payload_bash 'git commit -m x')" "$main_repo"
 

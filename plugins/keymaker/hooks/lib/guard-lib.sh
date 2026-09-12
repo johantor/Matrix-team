@@ -74,7 +74,13 @@ guard_jq2() {
 
 # guard_normalize <cmd> -- sets $guard_cmd with newlines flattened to spaces, so
 # a multi-line command cannot slip a clause past the single-line patterns below.
-guard_normalize() { guard_cmd="${1//$'\n'/ }"; }
+guard_normalize() {
+  # The patterns all expect one line, so newlines become spaces. The original is
+  # kept beside it: a newline is a command separator, and the shell walk that
+  # resolves a commit's directory has to see it as one.
+  guard_cmd_raw="$1"
+  guard_cmd="${1//$'\n'/ }"
+}
 
 # ------------------------------------------------- command-shape patterns
 
@@ -437,7 +443,12 @@ guard_next_word() {
         [ "$guard_span" != "$piece" ] || ok=''       # unterminated
         case "$piece" in *'$'*|*'`'*|*\\*) ok='' ;; esac
         out+="$piece" ;;
-      \\*) ok=''; rest="${rest#??}" ;;
+      \\*)
+        # An escape this cannot read. Consume the backslash AND what it escapes,
+        # but a lone trailing one escapes nothing: `${rest#??}` would not match
+        # it and the walk would never advance.
+        ok=''
+        if [ "${#rest}" -ge 2 ]; then rest="${rest:2}"; else rest=''; fi ;;
       *)
         [[ $rest =~ $GUARD_RE_WORD_RUN ]] || { ok=''; break; }
         piece="${BASH_REMATCH[1]}"
@@ -450,7 +461,7 @@ guard_next_word() {
   return 0
 }
 
-GUARD_RE_SEG_RUN=$'^([^\'";&|\\]+)'
+GUARD_RE_SEG_RUN=$'^([^\'";&|\\\n]+)'
 
 # guard_next_segment -- pulls one segment off the front of $guard_rest into
 # $guard_seg, and the separator run that ended it into $guard_sep (empty at the
@@ -462,10 +473,10 @@ guard_next_segment() {
   guard_seg=''; guard_sep=''
   while [ -n "$guard_rest" ]; do
     case "$guard_rest" in
-      [';&|']*)
+      [$'\n'';&|']*)
         while :; do
           case "$guard_rest" in
-            [';&|']*) guard_sep+="${guard_rest:0:1}"; guard_rest="${guard_rest:1}" ;;
+            [$'\n'';&|']*) guard_sep+="${guard_rest:0:1}"; guard_rest="${guard_rest:1}" ;;
             *) return 0 ;;
           esac
         done ;;
@@ -557,39 +568,69 @@ guard_add_dir() {
 # Words that move the shell, or run a command this walk cannot see into. Either
 # way the directory a later commit runs in stops being knowable from here.
 GUARD_RE_OPAQUE_CMD='^(pushd|popd|eval|exec|source|\.|bash|sh|zsh|dash|ksh|xargs)$'
-# Prefixes that may stand before the real command word.
-GUARD_RE_CMD_PREFIX='^([A-Za-z_][A-Za-z0-9_]*=.*|env|command|builtin|nohup|time)$'
+# Prefixes that may stand before the real command word: an assignment, a wrapper,
+# and the shell keywords that put a command after them (`then git commit …`).
+GUARD_RE_CMD_PREFIX='^([A-Za-z_][A-Za-z0-9_]*=.*|env|command|builtin|nohup|time|if|then|else|elif|while|until|do|!)$'
+# The two assignments that send git at another repository entirely.
+GUARD_RE_GIT_ENV='^(GIT_DIR|GIT_WORK_TREE)=(.*)$'
 
 # guard_collect_commit_dirs -- fills the $guard_dirs array with every directory a
-# `git commit` in $guard_cmd might run in, '' meaning the hook's own. Walks the
-# command segment by segment, carrying a `cd` onto what follows the way the shell
-# carries it, and adds '' beside a resolved directory wherever that carry stops
-# being certain.
+# `git commit` in the command might run in, '' meaning the hook's own and a
+# `gitdir:` entry meaning a repository named outright. An empty array means the
+# walk found nothing that commits.
+#
+# The command is walked segment by segment, carrying a `cd` onto what follows the
+# way the shell carries it. Every construct that could move the shell somewhere
+# this cannot follow costs confidence, and lost confidence adds '' to the
+# candidates rather than replacing them.
 guard_collect_commit_dirs() {
-  local cur='' sure=1 cond='' in_pipe='' next_cond='' depth=0 depth0 outer=''
-  local commit opaque dir dirsure target extra masked opens closes did_cd pre_cur
-  guard_rest="$guard_cmd"
+  local cur='' sure=1 cond='' in_pipe='' next_cond='' list_cur='' opaque commit
+  local dir dirsure target extra masked opens closes did_cd pre_cur w i n
+  local -a stack=()
+  guard_rest="${guard_cmd_raw:-$guard_cmd}"
   guard_dirs=()
   while [ -n "$guard_rest" ]; do
     guard_next_segment
     masked=''
     if [ -n "$guard_seg" ]; then guard_mask_quotes "$guard_seg"; masked="$guard_masked"; fi
-    # Subshell bookkeeping: a `cd` inside `( ... )` never reaches what follows it.
+    # Subshell bookkeeping, one entry per nesting level: a `cd` inside `( … )`
+    # never reaches what follows the closing paren.
     opens="${masked//[!(]/}"; closes="${masked//[!)]/}"
-    depth0="$depth"
-    if [ "$depth0" -eq 0 ] && [ -n "$opens" ]; then outer="$cur"; fi
-    depth=$((depth + ${#opens} - ${#closes}))
-    [ "$depth" -ge 0 ] || depth=0
-    guard_seg="${guard_seg#"${guard_seg%%[![:space:]]*}"}"
-    guard_seg="${guard_seg#[({]}"
+    n=${#opens}; i=0
+    while [ "$i" -lt "$n" ]; do stack+=("$cur"); i=$((i + 1)); done
+    # Strip every leading `(`/`{`: `( (git commit) )` opens two at once, and the
+    # command word is what follows them.
+    while :; do
+      guard_seg="${guard_seg#"${guard_seg%%[![:space:]]*}"}"
+      case "$guard_seg" in
+        [\({]*) guard_seg="${guard_seg#?}" ;;
+        *) break ;;
+      esac
+    done
     guard_wrest="$guard_seg"
     pre_cur="$cur"; did_cd=''; commit=''; opaque=''; dir="$cur"; dirsure="$sure"
 
-    # The command word, past any prefix words (assignments, `env`, `command`).
+    # The command word, past any prefix word. An assignment that points git at
+    # another repository is a candidate of its own, not a harmless prefix.
     while guard_next_word; do
-      [ -n "$guard_word_ok" ] || { opaque=1; break; }
+      if [ -z "$guard_word_ok" ]; then opaque=1; break; fi
+      if [[ $guard_word =~ $GUARD_RE_GIT_ENV ]]; then
+        target="${BASH_REMATCH[2]}"
+        case "${BASH_REMATCH[1]}" in
+          GIT_DIR)       guard_join_dir "$cur" "$target"; guard_add_dir "gitdir:$guard_dir" ;;
+          GIT_WORK_TREE) guard_join_dir "$cur" "$target"; guard_add_dir "$guard_dir" ;;
+        esac
+        dirsure=''
+        continue
+      fi
       [[ $guard_word =~ $GUARD_RE_CMD_PREFIX ]] || break
     done
+    case "$guard_word" in
+      # A command word cannot begin with `-`, so a wrapper's own option (`env -i
+      # git …`) ends the walk here, and an empty word means the segment opened
+      # with a redirection or a construct this does not parse.
+      ''|-*) [ -n "$guard_seg" ] && opaque=1 ;;
+    esac
     if [ -z "$opaque" ]; then
       case "$guard_word" in
         cd)
@@ -601,47 +642,65 @@ guard_collect_commit_dirs() {
               -?*) if [ -n "$target" ]; then extra=1; break; fi
                    continue ;;
             esac
-            # A second operand makes `cd` fail outright, leaving the shell put.
-            if [ -n "$target" ]; then extra=1; break; fi
+            if [ -n "$target" ]; then extra=1; break; fi   # `cd a b` fails outright
             target="$guard_word"
           done
-          if [ -n "$extra" ] || [ -z "$target" ]; then
+          # A redirection on the `cd` can fail and take the `cd` with it.
+          case "$guard_wrest" in [\<\>]*) extra=1 ;; esac
+          if [ -n "$extra" ]; then
             sure=''
+          elif [ -z "$target" ]; then
+            # Bare `cd` goes to $HOME. The hook holds the same environment, so
+            # the destination is knowable even though the word is not there.
+            sure=''
+            if [ -n "${HOME:-}" ] && guard_dir_usable "$HOME"; then did_cd=1; cur="$HOME"; fi
           else
             guard_join_dir "$cur" "$target" logical
             if guard_dir_usable "$guard_dir"; then
               did_cd=1; cur="$guard_dir"
-              if [ -n "$next_cond" ]; then cond=1; fi
+              # A `cd` the shell may skip: after `||` it runs only when the left
+              # side failed, and the commands after it run either way.
+              if [ "$next_cond" = 'or' ]; then sure=''; elif [ -n "$next_cond" ]; then cond=1; fi
             else
               sure=''
             fi
           fi ;;
         git)
           while guard_next_word; do
-            if [ -z "$guard_word_ok" ]; then dirsure=''; continue; fi
+            if [ -z "$guard_word_ok" ]; then
+              # The subcommand itself can be the unreadable word: a trailing
+              # backslash makes `git commit\` one, and it still commits.
+              dirsure=''
+              case "$guard_word" in commit*) commit=1; break ;; esac
+              continue
+            fi
             case "$guard_word" in
               commit) commit=1; break ;;
               -C) if guard_next_word && [ -n "$guard_word_ok" ]; then
-                    # Git resolves its own `-C`, `..` physically included, so this
-                    # join stays textual.
+                    # Git resolves its own `-C`, `..` physically included, so
+                    # this join stays textual.
                     guard_join_dir "$dir" "$guard_word"; dir="$guard_dir"
                   else
                     dirsure=''
                   fi ;;
               --git-dir=*|--work-tree=*|--git-dir|--work-tree)
-                # Another repository entirely. Its work tree becomes a candidate
-                # of its own, and the directory this walk resolved is no longer
-                # the whole answer.
+                # Another repository entirely. Git resolves these against its own
+                # `-C`, so they join onto $dir, not the shell's directory.
                 case "$guard_word" in
-                  *=*) target="${guard_word#*=}" ;;
-                  *)   if guard_next_word && [ -n "$guard_word_ok" ]; then
+                  *=*) target="${guard_word#*=}"; w="${guard_word%%=*}" ;;
+                  *)   w="$guard_word"
+                       if guard_next_word && [ -n "$guard_word_ok" ]; then
                          target="$guard_word"
                        else
                          target=''
                        fi ;;
                 esac
                 if [ -n "$target" ]; then
-                  guard_join_dir "$cur" "${target%/.git}"; guard_add_dir "$guard_dir"
+                  guard_join_dir "$dir" "$target"
+                  case "$w" in
+                    --git-dir) guard_add_dir "gitdir:$guard_dir" ;;
+                    *)         guard_add_dir "$guard_dir" ;;
+                  esac
                 fi
                 dirsure='' ;;
               -c|--namespace|--exec-path|--config-env|--super-prefix)
@@ -654,52 +713,64 @@ guard_collect_commit_dirs() {
       esac
     fi
     if [ -n "$opaque" ]; then
-      # A nested shell, an `eval`, or a command word this cannot read: it may cd,
-      # and it may carry the commit itself.
+      # A nested shell, an `eval`, a redirection ahead of the command, a word
+      # this cannot read: it may cd, and it may carry the commit itself. Nothing
+      # in such a segment can be parsed, so any `commit` in it counts.
       sure=''; dir="$cur"; dirsure=''
-      if [[ $guard_seg =~ $GUARD_RE_GIT_COMMIT ]]; then commit=1; fi
+      case "$guard_seg" in *commit*) commit=1 ;; esac
     fi
-    # A substitution runs its own commands, and this walk reads the word it sits
-    # in as one token: when what it holds looks like a commit of its own, the
-    # segment's directory is no longer the whole answer. Narrowed to a
-    # substitution carrying `commit`, so an ordinary `-m "done $(date)"` keeps
-    # the worktree it resolved.
-    # shellcheck disable=SC2016  # the pattern is a literal `$(`, not an expansion
+    # A substitution runs commands of its own inside a word this walk reads as
+    # one token. Tested against the command-position pattern from the
+    # substitution's own start, so `-m "done $(date)"` and `--grep=commit` keep
+    # the directory the segment resolved.
+    # shellcheck disable=SC2016  # the patterns are a literal `$(` and a backtick
     case "$guard_seg" in
-      *'$('*|*'`'*) case "${guard_seg#*[\$\`]}" in *commit*) dirsure='' ;; esac ;;
+      *'$('*) target="${guard_seg#*'$('}" ;;
+      *'`'*)  target="${guard_seg#*\`}" ;;
+      *)      target='' ;;
     esac
+    if [ -n "$target" ] && [[ $target =~ $GUARD_RE_GIT_COMMIT ]]; then
+      commit=1; dirsure=''
+    fi
     if [ -n "$commit" ]; then
       guard_add_dir "$dir"
       if [ -z "$dirsure" ] || [ -z "$sure" ]; then guard_add_dir ''; fi
     fi
 
-    # Either side of a pipe, and a list run with a single `&`, is a subshell: a
-    # `cd` there never moves the shell that runs what follows.
+    # Either side of a pipe runs in a subshell, and `&` backgrounds the whole
+    # list before it: neither moves the shell that runs what follows. The `&`
+    # case restores the directory from the start of that list, not just this
+    # segment's, so a `cd` earlier in the backgrounded list is undone too.
     case "$guard_sep" in
-      *'|'*) if [ "$guard_sep" != '||' ] && [ -n "$did_cd" ]; then cur="$pre_cur"; fi ;;
+      '|'|'|&') if [ -n "$did_cd" ]; then cur="$pre_cur"; fi ;;
+      '&')      cur="$list_cur" ;;
     esac
     if [ -n "$in_pipe" ] && [ -n "$did_cd" ]; then cur="$pre_cur"; fi
-    case "$guard_sep" in
-      '&') if [ -n "$did_cd" ]; then cur="$pre_cur"; fi ;;
-    esac
-    # A `cd` reached through `&&`/`||` may never run. It is safe to carry while
-    # that chain continues; a `;` or `&` ends the chain, and with it the
-    # certainty that the shell is where the carry says.
+    # A `cd` reached through `&&` is safe to carry while that chain continues; a
+    # `;` or `&` ends the chain, and with it the certainty.
     case "$guard_sep" in
       ';'|'&'|$'\n') if [ -n "$cond" ]; then sure=''; cond=''; fi ;;
     esac
     case "$guard_sep" in
-      '&&'|'||') next_cond=1 ;;
-      *)         next_cond='' ;;
+      '&&') next_cond='and' ;;
+      '||') next_cond='or' ;;
+      *)    next_cond='' ;;
     esac
     case "$guard_sep" in
       '|'|'|&') in_pipe=1 ;;
       '')       ;;
       *)        in_pipe='' ;;
     esac
-    if [ -n "$closes" ] && [ "$depth" -eq 0 ]; then cur="$outer"; fi
+    case "$guard_sep" in
+      ';'|'&'|$'\n') list_cur="$cur" ;;
+    esac
+    n=${#closes}; i=0
+    while [ "$i" -lt "$n" ] && [ "${#stack[@]}" -gt 0 ]; do
+      cur="${stack[${#stack[@]} - 1]}"
+      unset "stack[${#stack[@]} - 1]"
+      i=$((i + 1))
+    done
   done
-  [ "${#guard_dirs[@]}" -gt 0 ] || guard_dirs=('')
 }
 
 # guard_branch_at <dir> -- sets $guard_branch to the branch checked out in <dir>,
@@ -707,11 +778,14 @@ guard_collect_commit_dirs() {
 # and for a path that is no work tree at all; neither is a protected branch, and
 # a commit there lands nowhere this guard protects.
 guard_branch_at() {
-  if [ -n "$1" ]; then
-    guard_branch="$(git -C "$1" branch --show-current 2>/dev/null || true)"
-  else
-    guard_branch="$(git branch --show-current 2>/dev/null || true)"
-  fi
+  case "$1" in
+    # A `--git-dir`/`GIT_DIR` candidate: its work tree may be anywhere, or be a
+    # plain directory with no `.git` of its own, so the repository is asked
+    # directly rather than through a directory that may know nothing about it.
+    gitdir:*) guard_branch="$(git --git-dir="${1#gitdir:}" branch --show-current 2>/dev/null || true)" ;;
+    '')       guard_branch="$(git branch --show-current 2>/dev/null || true)" ;;
+    *)        guard_branch="$(git -C "$1" branch --show-current 2>/dev/null || true)" ;;
+  esac
 }
 
 # guard_block_protected_branch_commit <agent_type> <advice>
@@ -728,11 +802,23 @@ guard_block_protected_branch_commit() {
   [ -n "$agent_type" ] || return 0
   case "$guard_cmd" in *commit*) ;; *) return 0 ;; esac
   guard_collect_commit_dirs
+  if [ "${#guard_dirs[@]}" -eq 0 ]; then
+    # The walk found nothing that commits. `echo commit` and `git log
+    # --grep=commit` end here rather than being judged as commits. Only the
+    # command-position pattern can still see one the walk misread, and then the
+    # hook's own directory is all that is known about it.
+    [[ $guard_cmd =~ $GUARD_RE_GIT_COMMIT ]] || return 0
+    guard_dirs=('')
+  fi
   for dir in "${guard_dirs[@]}"; do
     guard_branch_at "$dir"
     if [[ $guard_branch =~ ^($GUARD_PROTECTED_BRANCHES)$ ]]; then
       where=''
-      if [ -n "$dir" ]; then where=" in '$dir'"; fi
+      case "$dir" in
+        '') ;;
+        gitdir:*) where=" in the repository at '${dir#gitdir:}'" ;;
+        *) where=" in '$dir'" ;;
+      esac
       echo "Blocked: ${agent_type} may not commit on protected branch '$guard_branch'${where}. ${advice}" >&2
       exit 2
     fi

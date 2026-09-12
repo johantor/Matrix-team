@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only ever added to that set, never substituted for the hook's own, so a construct the walk
   cannot model — `pushd`, `eval`, a nested `bash -c`, a `cd` target it cannot read literally —
   keeps the hook's directory among the candidates and the commit is still refused there. The
-  walk also detects the commit, so `(git commit …)` in a subshell is no longer missed.
+  walk also detects the commit, so `(git commit …)` in a subshell, behind a shell keyword, or on
+  the second line of a multi-line command is no longer missed — while a command that only
+  mentions the word (`echo commit`, `git log --grep=commit`) is not judged as one.
 
 ## [3.25.0] - 2026-09-10
 

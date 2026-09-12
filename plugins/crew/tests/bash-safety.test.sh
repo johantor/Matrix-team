@@ -94,6 +94,29 @@ assert_block "a glob as the target"             "$HOOK" "$(payload_bash 'git -C 
 assert_block "cd back through a wrapper"        "$HOOK" "$(payload_bash 'cd wt; command cd .. && git commit -m x' morpheus)" "protected branch" "$wt_repo"
 assert_block "a trailing separator"             "$HOOK" "$(payload_bash 'git commit -m x;' morpheus)" "protected branch" "$wt_repo"
 
+# The walk is the detector, so it must find a commit the patterns cannot see —
+# and must not invent one where there is none.
+assert_allow "the word commit in an echo"       "$HOOK" "$(payload_bash 'echo commit' morpheus)" "$wt_repo"
+assert_allow "commit as a log filter"           "$HOOK" "$(payload_bash 'git log --grep=commit -1' morpheus)" "$wt_repo"
+assert_block "a trailing backslash"             "$HOOK" "$(payload_bash 'git commit\' morpheus)" "protected branch" "$wt_repo"
+assert_block "nested subshell parens"           "$HOOK" "$(payload_bash '( (git -C . commit -m x) )' morpheus)" "protected branch" "$wt_repo"
+assert_block "a redirection before the command" "$HOOK" "$(payload_bash '> /tmp/guard-test-out git -C . commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "GIT_DIR in the environment"       "$HOOK" "$(payload_bash 'GIT_DIR=.git GIT_WORK_TREE=. git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "a wrapper carrying options"       "$HOOK" "$(payload_bash 'env -i git -C . commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "a commit inside an if"            "$HOOK" "$(payload_bash 'if true; then git -C . commit -m x; fi' morpheus)" "protected branch" "$wt_repo"
+assert_block "bare cd leaves the worktree"      "$HOOK" "$(payload_bash 'cd wt && cd; git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "a redirection on the cd"          "$HOOK" "$(payload_bash 'cd wt < /nonexistent; git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "--git-dir read from git -C"       "$HOOK" "$(payload_bash 'cd wt && git -C .. --git-dir=.git --work-tree=. commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "a substitution under echo"        "$HOOK" "$(payload_bash 'echo "$(git -C . commit -m x)"' morpheus)" "protected branch" "$wt_repo"
+assert_block "a backgrounded && list"           "$HOOK" "$(payload_bash 'cd wt && git commit -m a & git commit -m b' morpheus)" "protected branch" "$wt_repo"
+assert_block "a cd the || may skip"             "$HOOK" "$(payload_bash 'true || cd wt && git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "the outer subshell's directory"   "$HOOK" "$(payload_bash '(cd . && (cd wt && git commit -m a) && git commit -m b)' morpheus)" "protected branch" "$wt_repo"
+
+# A newline is a command separator. The patterns see a one-line command, so the
+# walk reads the payload as it arrived.
+assert_allow "a newline before a worktree commit" "$HOOK" "$(payload_bash $'cd wt\ngit commit -m x' morpheus)" "$wt_repo"
+assert_block "a newline back to the checkout"     "$HOOK" "$(payload_bash $'cd wt\ncd ..\ngit commit -m x' morpheus)" "protected branch" "$wt_repo"
+
 # --- Destructive commands ------------------------------------------------------
 assert_block "rm -rf /"        "$HOOK" "$(payload_bash 'rm -rf /' tank)"        "unsafe command"
 assert_block "rm -fr ~"        "$HOOK" "$(payload_bash 'rm -fr ~' tank)"        "unsafe command"

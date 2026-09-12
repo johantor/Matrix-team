@@ -94,15 +94,21 @@ anything stated here updates this file in the same commit.** Conventions live in
   `_protected_branch_commit` resolves a commit's directories with — `guard_next_word` (a word
   tokenizer: quotes removed, and a word carrying an expansion, a substitution, an escape or a
   glob reported as unreadable rather than guessed at), `guard_next_segment` and `guard_dq_span`
-  (a `\"` does not close a double-quoted span, so a separator after one splits nothing),
+  (a `\"` does not close a double-quoted span, so a separator after one splits nothing). It
+  walks **`guard_cmd_raw`**, the payload before `guard_normalize` flattened its newlines, since a
+  newline is a separator like `;`;
   `guard_join_dir` (logical `x/..` collapsing for a shell `cd`, left physical for git's own
   `-C`) and `guard_collect_commit_dirs`. It models `&&`/`||` short-circuiting, pipe and `&`
-  subshells, `( … )` nesting and `--git-dir`/`--work-tree`; anything else — `pushd`, `eval`, a
+  subshells (a backgrounded list restores the directory it started in), `( … )` nesting through a
+  stack, shell keywords and wrapper words before a command, and the repository-naming forms —
+  `--git-dir`/`--work-tree`/`GIT_DIR`/`GIT_WORK_TREE`, whose git dir becomes a `gitdir:` candidate
+  asked with `git --git-dir` rather than through a directory that may not know it; anything else — `pushd`, `eval`, a
   nested `bash -c`, an unreadable `cd` target, a substitution whose text carries a `commit` of
   its own — only loses confidence, which adds the hook's own directory to the candidates instead
   of replacing them. The walk is also the **detector**: a
   `commit` anywhere in the command starts it, which reaches the `(git commit)` spelling that
-  `_g_cmdpos` alone does not,
+  `_g_cmdpos` alone does not — and a walk that finds no commit means no check at all, so
+  `echo commit` and `git log --grep=commit` are not judged as commits,
   read-guard's limits, and the TTL-swept state-file helper. It is the one file in `hooks/`
   that must **not** be executable and must **not** be wired (validator §3/§6) — it has no
   main. Matching goes through bash's `=~` and parameter expansion, never `echo | grep`: these
