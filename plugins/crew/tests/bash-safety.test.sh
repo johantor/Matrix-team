@@ -39,6 +39,8 @@ assert_allow "staging then committing"         "$HOOK" "$(payload_bash 'cd wt &&
 # guard cannot read falls back to its own directory, which is the protected one.
 assert_block "commit back in the main checkout" "$HOOK" "$(payload_bash 'cd wt && git commit -m x && cd .. && git commit -m y' morpheus)" "protected branch" "$wt_repo"
 assert_block "git -C back to the main checkout" "$HOOK" "$(payload_bash 'cd wt && git -C .. commit -m x' morpheus)" "protected branch" "$wt_repo"
+# shellcheck disable=SC2016  # `$WT` must reach the guard unexpanded: an
+# expansion is exactly the target shape the guard cannot resolve.
 assert_block "unresolvable cd target"           "$HOOK" "$(payload_bash 'cd $WT && git commit -m x' morpheus)"      "protected branch" "$wt_repo"
 assert_block "cd in its own pipe segment"       "$HOOK" "$(payload_bash 'cd wt | git commit -m x' morpheus)"        "protected branch" "$wt_repo"
 assert_block "subshell cd does not leak out"    "$HOOK" "$(payload_bash '(cd wt && git commit -m a) && git commit -m b' morpheus)" "protected branch" "$wt_repo"
