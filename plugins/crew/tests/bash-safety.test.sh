@@ -20,6 +20,33 @@ assert_block "morpheus git commit on main" "$HOOK" "$(payload_bash 'git commit -
 assert_allow "morpheus git commit on feature branch" "$HOOK" "$(payload_bash 'git commit -m x' morpheus)" "$feat_repo"
 assert_allow "no-agent session may commit on main" "$HOOK" "$(payload_bash 'git commit -m x')" "$main_repo"
 
+# --- The commit's own directory decides, not the hook's ------------------------
+# A crew session working in a git worktree commits onto the worktree's branch
+# while the hook sits in the main checkout, which may be on a protected branch.
+# The guard resolves `git -C <dir>` and a preceding `cd`, so it judges the branch
+# the commit actually lands on.
+wt_repo="$(make_git_worktree develop feature/y)"
+assert_allow "git -C <worktree> commit"        "$HOOK" "$(payload_bash 'git -C wt commit -m x' morpheus)"        "$wt_repo"
+assert_allow "cd <worktree> && commit"         "$HOOK" "$(payload_bash 'cd wt && git commit -m x' morpheus)"     "$wt_repo"
+assert_allow "cd <worktree>; commit"           "$HOOK" "$(payload_bash 'cd wt; git commit -m x' morpheus)"       "$wt_repo"
+assert_allow "subshell cd <worktree>"          "$HOOK" "$(payload_bash '(cd wt && git commit -m x)' morpheus)"   "$wt_repo"
+assert_allow "quoted worktree path"            "$HOOK" "$(payload_bash 'git -C "wt" commit -m x' morpheus)"      "$wt_repo"
+assert_allow "git -C with a global flag after" "$HOOK" "$(payload_bash 'git -C wt -c user.name=a commit -m x' morpheus)" "$wt_repo"
+assert_allow "separator inside the message"    "$HOOK" "$(payload_bash 'cd wt && git commit -m "fix: a; b"' morpheus)"   "$wt_repo"
+assert_allow "staging then committing"         "$HOOK" "$(payload_bash 'cd wt && git add -A && git commit -m x' morpheus)" "$wt_repo"
+
+# The same resolution must not become a way around the backstop: every shape the
+# guard cannot read falls back to its own directory, which is the protected one.
+assert_block "commit back in the main checkout" "$HOOK" "$(payload_bash 'cd wt && git commit -m x && cd .. && git commit -m y' morpheus)" "protected branch" "$wt_repo"
+assert_block "git -C back to the main checkout" "$HOOK" "$(payload_bash 'cd wt && git -C .. commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "unresolvable cd target"           "$HOOK" "$(payload_bash 'cd $WT && git commit -m x' morpheus)"      "protected branch" "$wt_repo"
+assert_block "cd in its own pipe segment"       "$HOOK" "$(payload_bash 'cd wt | git commit -m x' morpheus)"        "protected branch" "$wt_repo"
+assert_block "subshell cd does not leak out"    "$HOOK" "$(payload_bash '(cd wt && git commit -m a) && git commit -m b' morpheus)" "protected branch" "$wt_repo"
+assert_block "a cd inside the message is text"  "$HOOK" "$(payload_bash 'git commit -m "cd wt"' morpheus)"          "protected branch" "$wt_repo"
+assert_block "a cd another command prints"      "$HOOK" "$(payload_bash 'echo cd wt && git commit -m x' morpheus)"  "protected branch" "$wt_repo"
+assert_block "a cd that would fail"             "$HOOK" "$(payload_bash 'cd nope; git commit -m x' morpheus)"       "protected branch" "$wt_repo"
+assert_allow "no-agent session in a worktree checkout" "$HOOK" "$(payload_bash 'cd wt && git commit -m x')" "$wt_repo"
+
 # --- Destructive commands ------------------------------------------------------
 assert_block "rm -rf /"        "$HOOK" "$(payload_bash 'rm -rf /' tank)"        "unsafe command"
 assert_block "rm -fr ~"        "$HOOK" "$(payload_bash 'rm -fr ~' tank)"        "unsafe command"

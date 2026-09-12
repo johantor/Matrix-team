@@ -52,7 +52,10 @@ anything stated here updates this file in the same commit.** Conventions live in
   otherwise be asked before the rule is read. Skill = `<name>/SKILL.md`, frontmatter `name:` +
   `description:` only; the `description:` carries the trigger phrases.
 - `hooks/` — `bash-safety.sh` (workers blocked from git entirely; protected-branch commit
-  backstop; watch/dev commands refused; **file-mutating Bash refused for agent sessions** — an
+  backstop — judged on the branch of the directory the commit *runs in*, resolved from the
+  command's own `cd`/`git -C`, so a worktree on a feature branch commits while the hook sits in
+  a checkout on `develop`; watch/dev commands refused;
+  **file-mutating Bash refused for agent sessions** — an
   in-place `sed`/`perl`/`ruby`/`awk`, `tee`, `patch`, `cp`/`mv`, and a redirect to anything but an
   exempt sink — so a Bash write can't route around `lane-guard`/`format.sh`, which are
   `Edit|Write`-only; #192. The one carve-out is **`git mv` for `morpheus`**: a rename changes no
@@ -85,7 +88,11 @@ anything stated here updates this file in the same commit.** Conventions live in
   (`GUARD_RE_*`), the shared block helpers (`guard_block_destructive` /
   `_watch_commands` / `_raw_reads` / `_file_writes` / `_protected_branch_commit`), the
   quote masking `_file_writes` needs (a `>` inside a string is not a redirect, a quoted
-  target still is a write), the protected-branch list,
+  target still is a write), the protected-branch list and the quote-aware segment walk
+  `_protected_branch_commit` resolves a commit's working directory with (`guard_next_segment` /
+  `guard_collect_commit_dirs`; every shape it cannot read — an expansion as a `cd` target,
+  `--git-dir`, a chdir inside `bash -c` — falls back to the hook's own directory, which refuses
+  rather than admits),
   read-guard's limits, and the TTL-swept state-file helper. It is the one file in `hooks/`
   that must **not** be executable and must **not** be wired (validator §3/§6) — it has no
   main. Matching goes through bash's `=~` and parameter expansion, never `echo | grep`: these

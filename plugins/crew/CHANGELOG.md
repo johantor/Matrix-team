@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The protected-branch commit backstop read the branch of the directory the *hook* sat in, so a
+  crew session working in a git worktree was refused every commit whenever the main checkout was
+  on `main`/`master`/`develop` — the worktree's own branch, which is what the commit lands on,
+  was never consulted. The guard now resolves the directory the commit runs in from the command
+  itself (`git -C <dir>`, and a `cd` ahead of the commit, quoted paths included) and judges that
+  directory's branch. Every shape it cannot read falls back to the hook's own directory, so a
+  commit that reaches the protected checkout — through `cd ..`, a pipe, a closed subshell, or a
+  `cd` whose target is an expansion — is still refused.
+
 ## [3.25.0] - 2026-09-10
 
 ### Changed

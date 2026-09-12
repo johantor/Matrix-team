@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The shared guard library's protected-branch commit backstop judged the branch of the directory
+  the hook sat in rather than the one the commit runs in, refusing work in a git worktree whose
+  main checkout was on a protected branch. It now resolves the command's own `git -C`/`cd` and
+  falls back to the hook's directory for any shape it cannot read.
+
 ## [0.9.1] - 2026-09-04
 
 ### Fixed

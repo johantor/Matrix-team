@@ -20,7 +20,9 @@ anything stated here updates this file in the same commit.** Conventions live in
 - `hooks/` — `bash-safety.sh`, `read-guard.sh`, `write-guard.sh` (keymaker's Write/Edit are
   confined to `.claude/` — ledger/outlines/notes only), plus `hooks/lib/guard-lib.sh`, the
   **sourced library** those three load: payload plumbing, the command-shape patterns, the
-  shared block helpers, and the protected-branch list. It is the one file in `hooks/` that must
+  shared block helpers, and the protected-branch list (whose backstop reads the branch of the
+  directory a commit *runs in*, resolved from the command's own `cd`/`git -C`, so a worktree on a
+  work branch is not refused for the checkout the hook sits in). It is the one file in `hooks/` that must
   not be executable and must not be wired (validator §3/§6) — it has no main. Vendoring it here
   rather than reaching into crew is what lets a standalone keymaker install enforce the same
   floor. `read-guard.sh` and `lib/guard-lib.sh` (byte-identical) and `bash-safety.sh`'s marked
