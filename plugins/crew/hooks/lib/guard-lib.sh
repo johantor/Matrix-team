@@ -664,6 +664,7 @@ guard_collect_commit_dirs() {
     # segment's directory is no longer the whole answer. Narrowed to a
     # substitution carrying `commit`, so an ordinary `-m "done $(date)"` keeps
     # the worktree it resolved.
+    # shellcheck disable=SC2016  # the pattern is a literal `$(`, not an expansion
     case "$guard_seg" in
       *'$('*|*'`'*) case "${guard_seg#*[\$\`]}" in *commit*) dirsure='' ;; esac ;;
     esac

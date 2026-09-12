@@ -86,8 +86,9 @@ assert_allow "a separator in the message"       "$HOOK" "$(payload_bash 'cd wt &
 # its own: neither may be read as inert text that leaves the carry trusted.
 assert_block "escaped quote inside a message"   "$HOOK" "$(payload_bash 'cd wt && git commit -m "x\"; noop" && cd .. && git commit -m y' morpheus)" "protected branch" "$wt_repo"
 # shellcheck disable=SC2016  # the substitution must reach the guard unexpanded —
-# it is the commit hidden inside it that these two assert on.
+# it is the commit hidden inside it that this asserts on.
 assert_block "commit inside a substitution"     "$HOOK" "$(payload_bash 'cd wt && git commit -m "$(git -C .. commit -m x)"' morpheus)" "protected branch" "$wt_repo"
+# shellcheck disable=SC2016  # the substitution must reach the guard unexpanded.
 assert_block "commit inside a backquoted one"   "$HOOK" "$(payload_bash 'cd wt && git commit -m `git -C .. commit -m x`' morpheus)" "protected branch" "$wt_repo"
 assert_block "a glob as the target"             "$HOOK" "$(payload_bash 'git -C ./[Ww]t commit -m x' morpheus)" "protected branch" "$wt_repo"
 assert_block "cd back through a wrapper"        "$HOOK" "$(payload_bash 'cd wt; command cd .. && git commit -m x' morpheus)" "protected branch" "$wt_repo"
