@@ -79,6 +79,16 @@ work_repo="$(make_git_branch chore/debt-upgrade-x)"
 assert_block "keymaker commit on main"   "$HOOK" "$(payload_bash 'git commit -m x' keymaker)" "protected branch" "$main_repo"
 assert_block "keymaker commit on master" "$HOOK" "$(payload_bash 'git commit -m x' keymaker)" "protected branch" "$master_repo"
 assert_block "git -C dir commit on main" "$HOOK" "$(payload_bash 'git -C . commit -m x' keymaker)" "protected branch" "$main_repo"
+# A commit is judged by the directory it runs in: a worktree on a work branch is
+# not the protected branch the hook's own directory sits on.
+wt_repo="$(make_git_worktree main chore/debt-upgrade-x)"
+assert_allow "keymaker commit in a worktree" "$HOOK" "$(payload_bash 'git -C wt commit -m x' keymaker)"    "$wt_repo"
+assert_allow "keymaker cd into a worktree"   "$HOOK" "$(payload_bash 'cd wt && git commit -m x' keymaker)" "$wt_repo"
+assert_block "keymaker cd back to main"      "$HOOK" "$(payload_bash 'cd wt && git -C .. commit -m x' keymaker)" "protected branch" "$wt_repo"
+assert_block "keymaker nested shell commit" "$HOOK" "$(payload_bash 'cd wt && bash -c "cd .. && git commit -m x"' keymaker)" "protected branch" "$wt_repo"
+assert_block "keymaker subshell commit"     "$HOOK" "$(payload_bash '(git commit -m x)' keymaker)" "protected branch" "$wt_repo"
+assert_allow "keymaker echoes the word"     "$HOOK" "$(payload_bash 'echo commit' keymaker)" "$wt_repo"
+assert_block "keymaker newline separator"   "$HOOK" "$(payload_bash $'cd wt\ncd ..\ngit commit -m x' keymaker)" "protected branch" "$wt_repo"
 assert_allow "keymaker commit on the work branch" "$HOOK" "$(payload_bash 'git commit -m x' keymaker)" "$work_repo"
 assert_allow "no-agent session may commit on main" "$HOOK" "$(payload_bash 'git commit -m x')" "$main_repo"
 

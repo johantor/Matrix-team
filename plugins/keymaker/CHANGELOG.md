@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The shared guard library's protected-branch commit backstop judged the branch of the directory
+  the hook sat in rather than the ones the commit may run in, refusing work in a git worktree
+  whose main checkout was on a protected branch. It now walks the command as shell words and
+  checks every candidate directory, keeping the hook's own in that set for any construct it
+  cannot model — so a worktree commits on its work branch, and nothing the walk misreads can
+  make the check weaker than it was.
+
 ## [0.9.1] - 2026-09-04
 
 ### Fixed
