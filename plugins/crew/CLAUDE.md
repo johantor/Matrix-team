@@ -98,7 +98,7 @@ anything stated here updates this file in the same commit.** Conventions live in
   walks **`guard_cmd_raw`**, the payload before `guard_normalize` flattened its newlines, since a
   newline is a separator like `;`;
   `guard_join_dir` (logical `x/..` collapsing for a shell `cd`, left physical for git's own
-  `-C`) and `guard_collect_commit_dirs`. It models `&&`/`||` short-circuiting, pipe and `&`
+  `-C` and after a `cd -P`, which puts the shell on the physical path git would resolve) and `guard_collect_commit_dirs`. It models `&&`/`||` short-circuiting, pipe and `&`
   subshells (a backgrounded list restores the directory it started in), `( … )` nesting through a
   stack, shell keywords and wrapper words before a command, and the repository-naming forms —
   `--git-dir`/`--work-tree`/`GIT_DIR`/`GIT_WORK_TREE`, whose git dir becomes a `gitdir:` candidate

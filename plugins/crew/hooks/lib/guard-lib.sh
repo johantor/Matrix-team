@@ -584,7 +584,7 @@ GUARD_RE_GIT_ENV='^(GIT_DIR|GIT_WORK_TREE)=(.*)$'
 # this cannot follow costs confidence, and lost confidence adds '' to the
 # candidates rather than replacing them.
 guard_collect_commit_dirs() {
-  local cur='' sure=1 cond='' in_pipe='' next_cond='' list_cur='' opaque commit
+  local cur='' sure=1 cond='' in_pipe='' next_cond='' list_cur='' phys='' opaque commit
   local dir dirsure target extra masked opens closes did_cd pre_cur w i n
   local -a stack=()
   guard_rest="${guard_cmd_raw:-$guard_cmd}"
@@ -640,6 +640,10 @@ guard_collect_commit_dirs() {
             case "$guard_word" in
               --) continue ;;
               -?*) if [ -n "$target" ]; then extra=1; break; fi
+                   # `-P` resolves symlinks as it goes and leaves the shell on
+                   # the physical path, so from here on `..` means what it means
+                   # to git, and the joins stop collapsing it.
+                   case "$guard_word" in -*P*) phys=1 ;; esac
                    continue ;;
             esac
             if [ -n "$target" ]; then extra=1; break; fi   # `cd a b` fails outright
@@ -655,7 +659,11 @@ guard_collect_commit_dirs() {
             sure=''
             if [ -n "${HOME:-}" ] && guard_dir_usable "$HOME"; then did_cd=1; cur="$HOME"; fi
           else
-            guard_join_dir "$cur" "$target" logical
+            if [ -n "$phys" ]; then
+              guard_join_dir "$cur" "$target"
+            else
+              guard_join_dir "$cur" "$target" logical
+            fi
             if guard_dir_usable "$guard_dir"; then
               did_cd=1; cur="$guard_dir"
               # A `cd` the shell may skip: after `||` it runs only when the left

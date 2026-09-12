@@ -111,6 +111,7 @@ assert_block "a substitution under echo"        "$HOOK" "$(payload_bash 'echo "$
 assert_block "a backgrounded && list"           "$HOOK" "$(payload_bash 'cd wt && git commit -m a & git commit -m b' morpheus)" "protected branch" "$wt_repo"
 assert_block "a cd the || may skip"             "$HOOK" "$(payload_bash 'true || cd wt && git commit -m x' morpheus)" "protected branch" "$wt_repo"
 assert_block "the outer subshell's directory"   "$HOOK" "$(payload_bash '(cd . && (cd wt && git commit -m a) && git commit -m b)' morpheus)" "protected branch" "$wt_repo"
+assert_block "cd -P resolves symlinks itself"   "$HOOK" "$(payload_bash 'cd -P wt && cd .. && git commit -m x' morpheus)" "protected branch" "$wt_repo"
 
 # A newline is a command separator. The patterns see a one-line command, so the
 # walk reads the payload as it arrived.
