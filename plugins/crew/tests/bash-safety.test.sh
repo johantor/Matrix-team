@@ -78,6 +78,20 @@ assert_allow "a closing paren in the message"   "$HOOK" "$(payload_bash 'cd wt &
 assert_allow "a substitution in the message"    "$HOOK" "$(payload_bash 'cd wt && git commit -m "done $(date)"' morpheus)" "$wt_repo"
 assert_allow "a guarded cd in an && chain"      "$HOOK" "$(payload_bash 'git fetch origin && cd wt && git commit -m x' morpheus)" "$wt_repo"
 assert_allow "git -C with -c before commit"     "$HOOK" "$(payload_bash 'git -C wt -c user.name=a commit -m x' morpheus)" "$wt_repo"
+assert_allow "quoted path carrying spaces"      "$HOOK" "$(payload_bash 'git -C "wt two words" commit -m x' morpheus)" "$wt_repo"
+assert_allow "cd into a path carrying spaces"   "$HOOK" "$(payload_bash 'cd "wt two words" && git commit -m x' morpheus)" "$wt_repo"
+assert_allow "a separator in the message"       "$HOOK" "$(payload_bash 'cd wt && git commit -m "a; b" && git commit -m c' morpheus)" "$wt_repo"
+
+# A quoted span ends where the shell ends it, and a substitution runs commands of
+# its own: neither may be read as inert text that leaves the carry trusted.
+assert_block "escaped quote inside a message"   "$HOOK" "$(payload_bash 'cd wt && git commit -m "x\"; noop" && cd .. && git commit -m y' morpheus)" "protected branch" "$wt_repo"
+# shellcheck disable=SC2016  # the substitution must reach the guard unexpanded —
+# it is the commit hidden inside it that these two assert on.
+assert_block "commit inside a substitution"     "$HOOK" "$(payload_bash 'cd wt && git commit -m "$(git -C .. commit -m x)"' morpheus)" "protected branch" "$wt_repo"
+assert_block "commit inside a backquoted one"   "$HOOK" "$(payload_bash 'cd wt && git commit -m `git -C .. commit -m x`' morpheus)" "protected branch" "$wt_repo"
+assert_block "a glob as the target"             "$HOOK" "$(payload_bash 'git -C ./[Ww]t commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "cd back through a wrapper"        "$HOOK" "$(payload_bash 'cd wt; command cd .. && git commit -m x' morpheus)" "protected branch" "$wt_repo"
+assert_block "a trailing separator"             "$HOOK" "$(payload_bash 'git commit -m x;' morpheus)" "protected branch" "$wt_repo"
 
 # --- Destructive commands ------------------------------------------------------
 assert_block "rm -rf /"        "$HOOK" "$(payload_bash 'rm -rf /' tank)"        "unsafe command"

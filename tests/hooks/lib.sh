@@ -159,6 +159,10 @@ make_git_worktree() {
     commit -q --allow-empty -m init >/dev/null 2>&1 || die "fixture commit failed in $dir"
   git -C "$dir" worktree add -q "$dir/wt" -b "$wt_branch" >/dev/null 2>&1 \
     || die "git worktree add failed in $dir"
+  # A second worktree whose path carries spaces: a quoted operand is a shape the
+  # guards have to read as one word, so every suite gets one to point at.
+  git -C "$dir" worktree add -q "$dir/wt two words" -b "$wt_branch-spaced" >/dev/null 2>&1 \
+    || die "git worktree add (spaced) failed in $dir"
   printf '%s' "$dir"
 }
 

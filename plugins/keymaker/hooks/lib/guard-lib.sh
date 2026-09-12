@@ -382,6 +382,30 @@ guard_block_file_writes() {
 # literal and needs no quoting dance.
 GUARD_RE_WORD_RUN=$'^([^[:space:];&|<>()\'"\\]+)'
 
+# guard_dq_span <text after an opening `"`>
+#   Sets $guard_span to the rest of that double-quoted span, its closing quote
+#   included, and $guard_rest_after to what follows it. A `\"` inside the span
+#   does not close it -- read naively, an escaped quote ends the span early and
+#   every separator after it splits where the shell would not. An unterminated
+#   span takes the remainder, which hides no separator.
+guard_dq_span() {
+  local s="$1" out='' piece t n
+  while :; do
+    case "$s" in
+      *\"*) piece="${s%%\"*}" ;;
+      *) guard_span="$out$s"; guard_rest_after=''; return 0 ;;
+    esac
+    s="${s#"$piece"}"
+    t="$piece"; n=0
+    while [ "${t%\\}" != "$t" ]; do t="${t%\\}"; n=$((n + 1)); done
+    if [ $((n % 2)) -eq 1 ]; then
+      out+="$piece\""; s="${s#\"}"          # the quote was escaped: span continues
+    else
+      guard_span="$out$piece\""; guard_rest_after="${s#\"}"; return 0
+    fi
+  done
+}
+
 # guard_next_word -- takes the next shell word off the front of $guard_wrest into
 # $guard_word, quotes removed, and sets $guard_word_ok to '' when the word cannot
 # be taken literally. Returns non-zero when the stream is at a separator or empty,
@@ -408,11 +432,9 @@ guard_next_word() {
           *)    out+="$rest"; rest=''; ok='' ;;
         esac ;;
       \"*)
-        rest="${rest#?}"
-        case "$rest" in
-          *\"*) piece="${rest%%\"*}"; rest="${rest#*\"}" ;;
-          *)    piece="$rest"; rest=''; ok='' ;;
-        esac
+        guard_dq_span "${rest#?}"
+        piece="${guard_span%\"}"; rest="$guard_rest_after"
+        [ "$guard_span" != "$piece" ] || ok=''       # unterminated
         case "$piece" in *'$'*|*'`'*|*\\*) ok='' ;; esac
         out+="$piece" ;;
       \\*) ok=''; rest="${rest#??}" ;;
@@ -436,7 +458,7 @@ GUARD_RE_SEG_RUN=$'^([^\'";&|\\]+)'
 # whole, so neither a separator inside a commit message nor an escaped one ends
 # a segment where the shell would not.
 guard_next_segment() {
-  local q piece
+  local piece
   guard_seg=''; guard_sep=''
   while [ -n "$guard_rest" ]; do
     case "$guard_rest" in
@@ -448,11 +470,14 @@ guard_next_segment() {
           esac
         done ;;
       \\*) guard_seg+="${guard_rest:0:2}"; guard_rest="${guard_rest:2}" ;;
-      \'*|\"*)
-        q="${guard_rest:0:1}"; guard_seg+="$q"; guard_rest="${guard_rest#?}"
+      \"*)
+        guard_seg+='"'; guard_dq_span "${guard_rest#?}"
+        guard_seg+="$guard_span"; guard_rest="$guard_rest_after" ;;
+      \'*)
+        guard_seg+="'"; guard_rest="${guard_rest#?}"
         case "$guard_rest" in
-          *"$q"*) guard_seg+="${guard_rest%%"$q"*}$q"; guard_rest="${guard_rest#*"$q"}" ;;
-          *)      guard_seg+="$guard_rest"; guard_rest='' ;;
+          *\'*) guard_seg+="${guard_rest%%\'*}'"; guard_rest="${guard_rest#*\'}" ;;
+          *)     guard_seg+="$guard_rest"; guard_rest='' ;;
         esac ;;
       *)
         [[ $guard_rest =~ $GUARD_RE_SEG_RUN ]] || { guard_seg+="$guard_rest"; guard_rest=''; return 0; }
@@ -634,6 +659,14 @@ guard_collect_commit_dirs() {
       sure=''; dir="$cur"; dirsure=''
       if [[ $guard_seg =~ $GUARD_RE_GIT_COMMIT ]]; then commit=1; fi
     fi
+    # A substitution runs its own commands, and this walk reads the word it sits
+    # in as one token: when what it holds looks like a commit of its own, the
+    # segment's directory is no longer the whole answer. Narrowed to a
+    # substitution carrying `commit`, so an ordinary `-m "done $(date)"` keeps
+    # the worktree it resolved.
+    case "$guard_seg" in
+      *'$('*|*'`'*) case "${guard_seg#*[\$\`]}" in *commit*) dirsure='' ;; esac ;;
+    esac
     if [ -n "$commit" ]; then
       guard_add_dir "$dir"
       if [ -z "$dirsure" ] || [ -z "$sure" ]; then guard_add_dir ''; fi

@@ -93,12 +93,14 @@ anything stated here updates this file in the same commit.** Conventions live in
   target still is a write), the protected-branch list and the shell walk
   `_protected_branch_commit` resolves a commit's directories with — `guard_next_word` (a word
   tokenizer: quotes removed, and a word carrying an expansion, a substitution, an escape or a
-  glob reported as unreadable rather than guessed at), `guard_next_segment`,
+  glob reported as unreadable rather than guessed at), `guard_next_segment` and `guard_dq_span`
+  (a `\"` does not close a double-quoted span, so a separator after one splits nothing),
   `guard_join_dir` (logical `x/..` collapsing for a shell `cd`, left physical for git's own
   `-C`) and `guard_collect_commit_dirs`. It models `&&`/`||` short-circuiting, pipe and `&`
   subshells, `( … )` nesting and `--git-dir`/`--work-tree`; anything else — `pushd`, `eval`, a
-  nested `bash -c`, an unreadable `cd` target — only loses confidence, which adds the hook's own
-  directory to the candidates instead of replacing them. The walk is also the **detector**: a
+  nested `bash -c`, an unreadable `cd` target, a substitution whose text carries a `commit` of
+  its own — only loses confidence, which adds the hook's own directory to the candidates instead
+  of replacing them. The walk is also the **detector**: a
   `commit` anywhere in the command starts it, which reaches the `(git commit)` spelling that
   `_g_cmdpos` alone does not,
   read-guard's limits, and the TTL-swept state-file helper. It is the one file in `hooks/`
